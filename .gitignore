@@ -1,0 +1,15 @@
+# Arquivos de build
+*.o
+
+# Executáveis
+compiler
+app
+
+# Arquivo de saída
+output.c
+
+# Arquivos da linguagem Sauce
+main.sauce
+
+
+
