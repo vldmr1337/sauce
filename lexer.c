@@ -63,16 +63,21 @@ Token next_token() {
         strncpy(tok.lexeme, SRC + start, len);
         tok.lexeme[len] = '\0';
 
-        // keywords
+        // --- PALAVRAS-CHAVE E LITERAIS (TODOS DEVEM RETORNAR IMEDIATAMENTE) ---
         if (strcmp(tok.lexeme, "say") == 0) { tok.type = TOK_SAY; return tok; }
-        if (strcmp(tok.lexeme, "hear") == 0) { tok.type = TOK_HEAR; return tok; }
-        if (strcmp(tok.lexeme, "if") == 0) { tok.type = TOK_IF; return tok; }
-        if (strcmp(tok.lexeme, "else") == 0) { tok.type = TOK_ELSE; return tok; }
-        if (strcmp(tok.lexeme, "fn") == 0) { tok.type = TOK_FN; return tok; }
-        if (strcmp(tok.lexeme, "return") == 0) { tok.type = TOK_RETURN; return tok; }
-
+        else if (strcmp(tok.lexeme, "hear") == 0) { tok.type = TOK_HEAR; return tok; }
+        else if (strcmp(tok.lexeme, "if") == 0) { tok.type = TOK_IF; return tok; }
+        else if (strcmp(tok.lexeme, "else") == 0) { tok.type = TOK_ELSE; return tok; }
+        else if (strcmp(tok.lexeme, "fn") == 0) { tok.type = TOK_FN; return tok; }
+        else if (strcmp(tok.lexeme, "return") == 0) { tok.type = TOK_RETURN; return tok; }
+        // NOVOS MAPPINGS LÓGICOS E LITERAIS (AGORA RETORNAM)
+        else if (strcmp(tok.lexeme, "true") == 0) { tok.type = TOK_TRUE; return tok; }
+        else if (strcmp(tok.lexeme, "false") == 0) { tok.type = TOK_FALSE; return tok; }
+        else if (strcmp(tok.lexeme, "and") == 0) { tok.type = TOK_AND; return tok; }
+        else if (strcmp(tok.lexeme, "or") == 0) { tok.type = TOK_OR; return tok; }
+        else if (strcmp(tok.lexeme, "not") == 0) { tok.type = TOK_NOT; return tok; }
         // types
-        if (!strcmp(tok.lexeme, "int") ||
+        else if (!strcmp(tok.lexeme, "int") ||
             !strcmp(tok.lexeme, "float") ||
             !strcmp(tok.lexeme, "text") ||
             !strcmp(tok.lexeme, "boolean"))
@@ -81,6 +86,7 @@ Token next_token() {
             return tok;
         }
 
+        // Se não for palavra-chave nem tipo, é um identificador
         tok.type = TOK_ID;
         return tok;
     }
@@ -106,20 +112,21 @@ Token next_token() {
 
     // string
     if (c == '"') {
-        int start = POS; // CAPTURA DA POSIÇÃO INICIAL (INCLUINDO A CITAÇÃO DE ABERTURA)
+        int start = POS; 
 
-        nextchar(); // Consome a citação de abertura
+        nextchar(); 
         while (peek() != '"' && peek() != '\0' && peek() != '\n') 
             nextchar();
 
         if (peek() == '"')
-            nextchar(); // Consome a citação de fechamento
+            nextchar(); 
         else {
             fprintf(stderr, "String não fechada ou quebra de linha inesperada na string!\n");
             exit(1);
         }
 
-        int len = POS - start; // O comprimento agora inclui ambas as aspas
+        // O comprimento da string deve ser apenas o conteúdo
+        int len = POS - start; 
         strncpy(tok.lexeme, SRC + start, len);
         tok.lexeme[len] = '\0';
 
@@ -177,7 +184,21 @@ Token next_token() {
             fprintf(stderr, "Caractere inválido no lexer: '|' (apenas '||' é suportado)\n");
             exit(1);
 
-        // Operadores de 1 caractere
+        // Operadores de 1 ou 2 caracteres (RELACIONAIS)
+        case '>':
+            nextchar();
+            if (peek() == '=') {
+                nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, ">="); return tok;
+            }
+            tok.type = TOK_OPERATOR; strcpy(tok.lexeme, ">"); return tok;
+        case '<':
+            nextchar();
+            if (peek() == '=') {
+                nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "<="); return tok;
+            }
+            tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "<"); return tok;
+
+        // Operadores de 1 caractere (ARITMÉTICOS)
         case '+':
             nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "+"); return tok;
         case '-':
@@ -186,10 +207,6 @@ Token next_token() {
             nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "*"); return tok;
         case '/':
             nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "/"); return tok;
-        case '>':
-            nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, ">"); return tok;
-        case '<':
-            nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "<"); return tok;
     }
 
     fprintf(stderr, "Caractere inválido no lexer: '%c'\n", c);

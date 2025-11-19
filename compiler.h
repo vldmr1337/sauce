@@ -23,7 +23,13 @@ typedef enum {
     TOK_LBRACE, TOK_RBRACE, TOK_EQ, TOK_COMMA, TOK_SEMI,
     TOK_FN, TOK_IF, TOK_ELSE, TOK_RETURN, TOK_SAY, TOK_HEAR,
     TOK_TYPE, TOK_OP, TOK_UNKNOWN, TOK_NEWLINE,
-    TOK_OPERATOR, TOK_BOOL 
+    TOK_OPERATOR, TOK_BOOL,// NOVOS TOKENS LÓGICOS E LITERAIS
+    TOK_TRUE,
+    TOK_FALSE,
+    TOK_AND, // and
+    TOK_OR,  // or
+    TOK_NOT, // not
+    
 } TokenType;
 
 typedef struct {
@@ -49,7 +55,9 @@ typedef enum {
     N_VAR,
     N_FN_CALL,
     N_ADD, N_SUB, N_MUL, N_DIV,
-    N_GT, N_LT, N_EQ_CMP, N_NEQ, N_AND, N_OR
+    N_GT, N_LT, N_EQ_CMP, N_NEQ, N_AND, N_OR, N_NOT,// OPERADOR UNÁRIO
+    N_GTE, // Novo: Greater Than or Equal (>=)
+    N_LTE // Novo: Less Than or Equal (<=)
 } NodeKind;
 
 // Estrutura do Nó da AST

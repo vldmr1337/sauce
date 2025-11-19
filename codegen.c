@@ -10,6 +10,10 @@ extern int globalStmtCount;
 
 static FILE *outf = NULL;
 
+// NOVO: Lista para armazenar atribuições que devem ir para o main (para evitar o erro "initializer element is not constant")
+char global_init_code[MAX_SYM][512];
+int global_init_count = 0;
+
 // --- Estruturas de Suporte para Semantic Analysis ---
 typedef struct {
     char name[MAX_TOKEN_LEN];
@@ -33,6 +37,13 @@ static void gen_expr(Node *n, Node *fn_context);
 static void gen_statement(Node *n, Node *fn_def);
 static void gen_fn_definition(Node *n);
 
+// NOVO: Helper para checar se a expressão é um literal simples (seguro para inicialização global C)
+static int is_literal_constant(Node *n) {
+    if (!n) return 0;
+    return n->kind == N_INT || n->kind == N_FLOAT || n->kind == N_BOOL || n->kind == N_STRING;
+}
+
+
 // --- Semantic Analysis & Utilities (Implementação Completa) ---
 
 const char *sauce_type_to_c(const char *sauce_type) {
@@ -53,7 +64,7 @@ Node *find_function_def(const char *name) {
 }
 
 const char *lookup_variable_type(const char *name, Node *fn_def) {
-    // 1. Verificar escopo da função (parâmetros)
+    // 1. Verificar escopo da função (parâmetros e variáveis locais)
     if (fn_def != NULL) {
         Node *param_wrapper = fn_def->left;
         while (param_wrapper) {
@@ -124,7 +135,9 @@ const char *get_expr_type(Node *expr, Node *fn_context) {
             fprintf(stderr, "Erro Semântico: Tipos incompatíveis para operação aritmética: %s e %s\n", left_type, right_type);
             exit(1);
         }
-        case N_GT: case N_LT: case N_EQ_CMP: case N_NEQ: case N_AND: case N_OR:
+        case N_GT: case N_LT: case N_EQ_CMP: case N_NEQ: 
+        case N_GTE: case N_LTE: // NOVOS OPERADORES
+        case N_AND: case N_OR: case N_NOT: 
             return "boolean";
             
         default:
@@ -156,11 +169,14 @@ const char *recursive_find_return_type(Node *block_list, Node *fn_context) {
 void infer_function_return_type(Node *fn_def) {
     if (fn_def->typeName[0] == '\0' || strcmp(fn_def->typeName, "void") == 0) {
         const char *inferred_type = recursive_find_return_type(fn_def->mid, fn_def);
-        strncpy(fn_def->typeName, inferred_type, MAX_TOKEN_LEN-1);
-        fn_def->typeName[MAX_TOKEN_LEN-1] = '\0';
+        if (inferred_type != NULL) {
+            strncpy(fn_def->typeName, inferred_type, MAX_TOKEN_LEN-1);
+            fn_def->typeName[MAX_TOKEN_LEN-1] = '\0';
+        }
     }
     if (strcmp(fn_def->typeName, "text") == 0) {
-        strcpy(fn_def->typeName, "string");
+        // Assume "string" como tipo padrão C para texto
+        strcpy(fn_def->typeName, "string"); 
     }
 }
 
@@ -181,8 +197,8 @@ static void gen_expr(Node *n, Node *fn_context) {
             break;
 
         case N_STRING:
-            // FIX: O n->text (lexeme) já contém as aspas. Apenas imprima o conteúdo.
-            fprintf(outf, "%s", n->text);
+            // String literais já incluem aspas do lexer
+            fprintf(outf, "%s", n->text); 
             break;
 
         case N_VAR:
@@ -201,17 +217,37 @@ static void gen_expr(Node *n, Node *fn_context) {
             }
             fprintf(outf, ")");
             break;
+        
+        // Operadores Lógicos/Aritméticos/Comparação
+        case N_AND:
+        case N_OR:
+        case N_NOT:
+        case N_ADD: case N_SUB: case N_MUL: case N_DIV: 
+        case N_GT: case N_EQ_CMP: case N_LT: case N_NEQ: 
+        case N_GTE: case N_LTE: // NOVOS OPERADORES
+        
+            if (n->kind == N_NOT) {
+                fprintf(outf, "(!");
+                gen_expr(n->left, fn_context);
+                fprintf(outf, ")");
+                break;
+            }
 
-        case N_ADD: case N_SUB: case N_MUL: case N_DIV: case N_GT: case N_EQ_CMP:
             fprintf(outf, "("); 
             gen_expr(n->left, fn_context); 
             
-            if (n->kind == N_ADD) fprintf(outf, " + ");
+            if (n->kind == N_AND) fprintf(outf, " && "); 
+            else if (n->kind == N_OR) fprintf(outf, " || "); 
+            else if (n->kind == N_ADD) fprintf(outf, " + ");
             else if (n->kind == N_SUB) fprintf(outf, " - ");
             else if (n->kind == N_MUL) fprintf(outf, " * ");
             else if (n->kind == N_DIV) fprintf(outf, " / ");
             else if (n->kind == N_GT) fprintf(outf, " > ");
+            else if (n->kind == N_LT) fprintf(outf, " < ");
             else if (n->kind == N_EQ_CMP) fprintf(outf, " == ");
+            else if (n->kind == N_NEQ) fprintf(outf, " != ");
+            else if (n->kind == N_GTE) fprintf(outf, " >= ");
+            else if (n->kind == N_LTE) fprintf(outf, " <= ");
             
             gen_expr(n->right, fn_context); 
             fprintf(outf, ")"); 
@@ -228,16 +264,18 @@ static void gen_statement(Node *n, Node *fn_def) {
 
     switch (n->kind) {
         case N_VAR_DECL: {
+            // Este caso só deve ocorrer para declarações LOCAIS.
             const char *sauce_type = n->typeName;
             const char *c_type = sauce_type_to_c(sauce_type);
             
             fprintf(outf, "    %s %s", c_type, n->name);
             
+            // Inicialização
             if (n->left) {
                 fprintf(outf, " = ");
                 gen_expr(n->left, fn_def);
             } else if (strcmp(c_type, "char*") == 0) {
-                 fprintf(outf, " = NULL");
+                 fprintf(outf, " = NULL"); // Corrigido
             } else {
                  fprintf(outf, " = 0");
             }
@@ -251,6 +289,7 @@ static void gen_statement(Node *n, Node *fn_def) {
 
             if (strcmp(sauce_type, "text") == 0 || strcmp(sauce_type, "string") == 0) {
                 // Para atribuição de strings, use free e strdup
+                // Usamos a função auxiliar strdup_safe para garantir NULL safety
                 fprintf(outf, "    if (%s != NULL) free(%s);\n", n->name, n->name);
                 fprintf(outf, "    %s = strdup(", n->name);
                 gen_expr(n->left, fn_def);
@@ -268,22 +307,35 @@ static void gen_statement(Node *n, Node *fn_def) {
             const char *type = get_expr_type(expr, fn_def);
             
             fprintf(outf, "    printf(");
-            if (strcmp(type, "int") == 0 || strcmp(type, "boolean") == 0) {
+            
+            // Tratamento de Int, Float, String/Text
+            if (strcmp(type, "int") == 0) {
                 fprintf(outf, "\"%%d\\n\", ");
+                gen_expr(expr, fn_def);
+                fprintf(outf, ");\n");
             } else if (strcmp(type, "float") == 0) {
                 fprintf(outf, "\"%%f\\n\", ");
+                gen_expr(expr, fn_def);
+                fprintf(outf, ");\n");
             } else if (strcmp(type, "text") == 0 || strcmp(type, "string") == 0) {
                 fprintf(outf, "\"%%s\\n\", ");
-            } else {
-                 fprintf(outf, "\"UNKNOWN_TYPE\\n\"");
-                 break;
+                gen_expr(expr, fn_def);
+                fprintf(outf, ");\n");
+            } 
+            // CORREÇÃO: Caso Boolean (imprime "true" ou "false")
+            else if (strcmp(type, "boolean") == 0) {
+                fprintf(outf, "\"%%s\\n\", ("); 
+                gen_expr(expr, fn_def); 
+                fprintf(outf, ") ? \"true\" : \"false\""); 
+                fprintf(outf, ");\n"); // <-- CORREÇÃO: Fechamento do printf e ;
+            }
+            else {
+                 fprintf(outf, "\"Erro: Tipo desconhecido\\n\");\n");
             }
             
-            gen_expr(expr, fn_def);
-            fprintf(outf, ");\n");
-            break;
+            break; // Sai do switch após o tratamento completo do N_SAY
         }
-
+        
         case N_HEAR: {
             const char *var_name = n->left->name;
             const char *sauce_type = lookup_variable_type(var_name, fn_def);
@@ -292,10 +344,11 @@ static void gen_statement(Node *n, Node *fn_def) {
             fprintf(outf, "    printf(\"\\n> \");\n");
             
             if (strcmp(c_type, "int") == 0) {
-                fprintf(outf, "    if (scanf(\"%%d\", &%s) != 1) { /* error handling */ } \n", var_name);
+                fprintf(outf, "    if (scanf(\"%%d\", &%s) != 1) { /* erro */ } \n", var_name);
             } else if (strcmp(c_type, "double") == 0) {
-                fprintf(outf, "    if (scanf(\"%%lf\", &%s) != 1) { /* error handling */ } \n", var_name);
+                fprintf(outf, "    if (scanf(\"%%lf\", &%s) != 1) { /* erro */ } \n", var_name);
             } else if (strcmp(c_type, "char*") == 0) {
+                 // CORREÇÃO: Leitura de strings
                  fprintf(outf, "    { char _buf[1024]; if (!fgets(_buf, sizeof(_buf), stdin)) _buf[0]='\\0'; _buf[strcspn(_buf, \"\\n\")]='\\0'; if (%s != NULL) free(%s); %s = strdup(_buf); }\n", var_name, var_name, var_name);
             } else {
                 fprintf(outf, "    // Tipo '%s' nao suporta HEAR.\n", sauce_type);
@@ -374,9 +427,9 @@ static void gen_fn_definition(Node *n) {
     }
     
     // Retorno de segurança
-    if (strcmp(return_type, "void") != 0 && (n->mid == NULL || n->mid->left->kind != N_RETURN)) {
+    if (strcmp(return_type, "void") != 0 && (stmt_wrapper == NULL || stmt_wrapper->left->kind != N_RETURN)) {
         fprintf(outf, "    // Retorno de segurança\n");
-        if (strcmp(return_type, "int") == 0) {
+        if (strcmp(return_type, "int") == 0 || strcmp(return_type, "boolean") == 0) {
             fprintf(outf, "    return 0;\n");
         } else if (strcmp(return_type, "double") == 0) {
             fprintf(outf, "    return 0.0;\n");
@@ -393,7 +446,6 @@ static void gen_fn_definition(Node *n) {
 // --- Ponto de Entrada Global da Geração de Código ---
 
 void generate_code(const char *out_c, Node *program_root) {
-    // Para remover o aviso de parâmetro não utilizado
     (void)program_root; 
 
     outf = fopen(out_c, "w");
@@ -401,7 +453,7 @@ void generate_code(const char *out_c, Node *program_root) {
 
     fprintf(outf, "/* Código C gerado pelo compilador Sauce (AST-based) */\n");
     
-    // FIX CRÍTICO: Garante que strdup e fmemopen sejam declarados corretamente
+    // Garante compatibilidade POSIX para strdup
     fprintf(outf, "#ifndef _POSIX_C_SOURCE\n");
     fprintf(outf, "#define _POSIX_C_SOURCE 200809L\n");
     fprintf(outf, "#endif\n");
@@ -435,10 +487,8 @@ void generate_code(const char *out_c, Node *program_root) {
     fprintf(outf, "\n");
     
     // --- Variáveis Globais (Declaração no Escopo Global C) ---
-    char global_text_init_code[MAX_FN_DEFS][512];
-    int global_text_count = 0;
+    global_init_count = 0; 
     
-    // Percorre comandos globais para gerar declarações e registrar símbolos
     for (int i = 0; i < globalStmtCount; i++) {
         Node *stmt = global_stmts[i];
         if (stmt->kind == N_VAR_DECL) {
@@ -452,45 +502,53 @@ void generate_code(const char *out_c, Node *program_root) {
                 globalSymbolCount++;
             }
             
-            if (strcmp(c_type, "char*") == 0) {
-                // Declara como NULL globalmente
+            // Lógica para capturar a expressão de inicialização (mantida com temporários)
+            char expr_buf[512] = {0}; 
+            
+            // Abre arquivo temporário para capturar a saída de gen_expr
+            FILE *temp_out = tmpfile(); 
+            if (!temp_out) {
+                fprintf(stderr, "Erro FATAL: Falha ao criar arquivo temporário.\n");
+                exit(1);
+            }
+            
+            FILE *old_outf = outf;
+            outf = temp_out;
+            
+            gen_expr(stmt->left, NULL); 
+            
+            fflush(outf);
+            rewind(outf);
+            
+            if (fgets(expr_buf, sizeof(expr_buf), outf) == NULL) {
+                 expr_buf[0] = '\0';
+            } else {
+                expr_buf[strcspn(expr_buf, "\n")] = 0; 
+            }
+            
+            fclose(temp_out);
+            outf = old_outf; 
+            
+            
+            if (is_literal_constant(stmt->left) && strcmp(c_type, "char*") != 0) {
+                // PRIMITIVOS com valores literais: Pode inicializar globalmente
+                fprintf(outf, "%s %s = %s;\n", c_type, stmt->name, expr_buf);
+            }
+            else if (strcmp(c_type, "char*") == 0) {
+                // STRINGS: Declara NULL globalmente, atribui em main com strdup
                 fprintf(outf, "%s %s = NULL;\n", c_type, stmt->name);
                 
-                // --- Bloco de Inicialização de String Corrigido (Usando fmemopen seguro) ---
-                char expr_buf[256] = {0}; 
-                
-                FILE *temp_out = fmemopen(expr_buf, sizeof(expr_buf), "w");
-                
-                if (!temp_out) {
-                    fprintf(stderr, "Erro FATAL: fmemopen falhou. Seu ambiente não suporta esta função corretamente. \n");
-                    exit(1);
-                }
+                // Salva a atribuição para ser gerada dentro do main
+                snprintf(global_init_code[global_init_count], 512, "    %s = strdup(%s);\n", stmt->name, expr_buf);
+                global_init_count++;
+            }
+            else {
+                // EXPRESSÕES NÃO-CONSTANTES: Declara 0 globalmente, atribui em main
+                fprintf(outf, "%s %s = 0;\n", c_type, stmt->name); 
 
-                FILE *old_outf = outf;
-                outf = temp_out;
-                gen_expr(stmt->left, NULL); // Escreve a expressão no buffer
-                
-                fflush(outf); 
-                
-                outf = old_outf; 
-                
-                long current_pos = ftell(temp_out);
-                if ((long unsigned int)current_pos < sizeof(expr_buf)) {
-                    expr_buf[current_pos] = '\0'; 
-                } else {
-                    expr_buf[sizeof(expr_buf) - 1] = '\0';
-                }
-
-                fclose(temp_out); 
-                
-                snprintf(global_text_init_code[global_text_count], 512, "    %s = strdup(%s);\n", stmt->name, expr_buf);
-                global_text_count++;
-                
-            } else {
-                // Inicialização normal de primitivos
-                fprintf(outf, "%s %s = ", c_type, stmt->name);
-                gen_expr(stmt->left, NULL);
-                fprintf(outf, ";\n");
+                // Salva a atribuição para ser gerada dentro do main
+                snprintf(global_init_code[global_init_count], 512, "    %s = %s;\n", stmt->name, expr_buf);
+                global_init_count++;
             }
         }
     }
@@ -501,24 +559,33 @@ void generate_code(const char *out_c, Node *program_root) {
         gen_fn_definition(fn_defs[i]);
     }
     
-    // 4. Bloco principal (main) - ÚNICA DEFINIÇÃO
+    // 4. Bloco principal (main)
     fprintf(outf, "\nint main(void) {\n");
     
-    // Inicialização de strings globais (tempo de execução)
-    for(int i = 0; i < global_text_count; i++) {
-        fprintf(outf, "%s", global_text_init_code[i]);
+    // Inicialização de strings e expressões não-constantes globais (tempo de execução)
+    for(int i = 0; i < global_init_count; i++) {
+        fprintf(outf, "%s", global_init_code[i]);
     }
 
     // Geração de Comandos Globais Executáveis
     for (int i = 0; i < globalStmtCount; i++) {
         Node *stmt = global_stmts[i];
-        if (stmt->kind != N_VAR_DECL) {
+        if (stmt->kind != N_VAR_DECL) { // Ignora as declarações que já foram tratadas
             gen_statement(stmt, NULL);
         }
     }
     
     // Cleanup (free) para strings globais alocadas
-    if (global_text_count > 0) {
+    int needs_cleanup = 0;
+    for (int i = 0; i < globalStmtCount; i++) {
+        Node *stmt = global_stmts[i];
+        if (stmt->kind == N_VAR_DECL && (strcmp(stmt->typeName, "text") == 0 || strcmp(stmt->typeName, "string") == 0)) {
+            needs_cleanup = 1;
+            break;
+        }
+    }
+    
+    if (needs_cleanup) {
         fprintf(outf, "\n    // Cleanup para variaveis text globais\n");
         for (int i = 0; i < globalStmtCount; i++) {
             Node *stmt = global_stmts[i];

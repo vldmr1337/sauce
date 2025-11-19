@@ -11,5 +11,9 @@ output.c
 # Arquivos da linguagem Sauce
 main.sauce
 
+codegen.o
+compiler.o
+parser.o
+lexer.o
 
 
