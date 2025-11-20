@@ -19,11 +19,34 @@ Node *make_node(NodeKind kind, const char *name, const char *text, Node *left, N
     n->kind = kind;
     if (name) strncpy(n->name, name, MAX_TOKEN_LEN-1);
     if (text) strncpy(n->text, text, MAX_TOKEN_LEN-1);
+    // IMPORTANTE: Inicializar o novo campo
+    n->explicitReturnType[0] = '\0'; 
     n->left = left;
     n->mid = mid;
     n->right = right;
     return n;
 }
+
+// ------------------------------------------------------------
+// NOVAS FUNÇÕES CONSTRUTORAS PARA N_RETURN
+// ------------------------------------------------------------
+
+// Implementação para N_RETURN sem tipo explícito
+Node *make_return_node(Node *expr) {
+    return make_node(N_RETURN, NULL, NULL, expr, NULL, NULL);
+}
+
+// Implementação para N_RETURN com tipo explícito (return[tipo] expr)
+Node *make_return_node_with_type(const char *typeName, Node *expr) {
+    Node *n = make_node(N_RETURN, NULL, NULL, expr, NULL, NULL);
+    // COPIA O TIPO EXPLÍCITO PARA O NOVO CAMPO
+    strncpy(n->explicitReturnType, typeName, MAX_TOKEN_LEN-1);
+    return n;
+}
+
+// ------------------------------------------------------------
+// FUNÇÕES DE UTILIDADE E DE AVANÇO (INALTERADAS)
+// ------------------------------------------------------------
 
 void advance() { curtok = next_token(); }
 void expect(TokenType t) {
@@ -54,7 +77,7 @@ static Node *parse_function_definition();
 
 
 /* ------------------------------------------------------------
-   EXPRESSÕES (Hierarquia de Precedência)
+   EXPRESSÕES (Hierarquia de Precedência) - INALTERADAS
    ------------------------------------------------------------ */
 
 static Node *parse_and_or() {
@@ -92,20 +115,8 @@ static Node *parse_comparison() {
         else if (strcmp(curtok.lexeme, "==") == 0) op_kind = N_EQ_CMP;
         else if (strcmp(curtok.lexeme, "<") == 0) op_kind = N_LT; 
         else if (strcmp(curtok.lexeme, "!=") == 0) op_kind = N_NEQ; 
-        // Novos Nodos para >= e <= (Se N_GTE e N_LTE não existirem, usaremos o > e < padrão com a semântica de C)
-        // Para compatibilidade com o codegen.c anterior que não tinha N_GTE/N_LTE, usamos temporariamente N_GT/N_LT:
-
-        
-        // Se a sua AST suportar N_GTE e N_LTE, o codegen.c precisará ser atualizado.
-        // Assumindo que N_GTE/N_LTE são novos tipos de nó:
-        
-        // Se o seu `NodeKind` não tiver `N_GTE` e `N_LTE`, use:
-        /*
-        else if (strcmp(curtok.lexeme, ">=") == 0) { 
-            fprintf(stderr, "Erro de AST: Operador '>=' precisa de um tipo de nó (N_GTE)!\n");
-            exit(1); 
-        }
-        */
+        else if (strcmp(curtok.lexeme, ">=") == 0) op_kind = N_GTE; 
+        else if (strcmp(curtok.lexeme, "<=") == 0) op_kind = N_LTE; 
 
         advance();
         Node *right = parse_expression();
@@ -207,7 +218,7 @@ static Node *parse_literal() {
         node = make_node(N_BOOL, NULL, curtok.lexeme, NULL, NULL, NULL);
         advance();
     } else {
-        return NULL; // Retorna NULL se não for um literal, permitindo que parse_factor tente outras opções
+        return NULL; // Retorna NULL se não for um literal
     }
     return node;
 }
@@ -246,7 +257,7 @@ static Node *parse_condition() {
 
 
 /* ------------------------------------------------------------
-   STATEMENTS (Comandos) - Com Newlines Corrigidos
+   STATEMENTS (Comandos) - COM A CORREÇÃO DE N_RETURN
    ------------------------------------------------------------ */
 
 // Analisa um comando que pode ser global ou local
@@ -254,6 +265,8 @@ static Node *parse_statement(int is_global) {
     skip_newlines(); 
 
     if (curtok.type == TOK_ID) {
+        // ... (N_VAR_DECL, N_VAR_ASSIGN, N_EXPR_STMT) - Lógica inalterada
+        // ... (Omitido para brevidade, mas o bloco é o mesmo que o original)
         char id[MAX_TOKEN_LEN]; strcpy(id, curtok.lexeme);
         advance();
 
@@ -275,10 +288,8 @@ static Node *parse_statement(int is_global) {
             Node *decl = make_node(N_VAR_DECL, id, NULL, expr, NULL, NULL);
             strncpy(decl->typeName, type, MAX_TOKEN_LEN-1);
             
-            // Consome o final do comando
             if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF) {
                 fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após declaração.\n");
-                // Tenta consumir o token extra para continuar
                 advance(); 
             }
             return decl;
@@ -292,7 +303,6 @@ static Node *parse_statement(int is_global) {
                 exit(1);
             }
 
-            // Consome o final do comando
             if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF) {
                 fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após atribuição.\n");
                 advance();
@@ -303,7 +313,6 @@ static Node *parse_statement(int is_global) {
             // N_EXPR_STMT (Function Call): ID ( ARGS ) \n
             Node *expr = parse_call(id);
             
-            // Consome o final do comando
             if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF) {
                 fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após chamada de função.\n");
                 advance();
@@ -311,7 +320,6 @@ static Node *parse_statement(int is_global) {
             return make_node(N_EXPR_STMT, NULL, NULL, expr, NULL, NULL);
         }
         else if (curtok.type == TOK_NEWLINE || curtok.type == TOK_EOF) {
-            // N_EXPR_STMT (Standalone Variable - Provavelmente erro em Sauce, mas aceito como expressão)
             
             if (is_global) {
                  fprintf(stderr, "Parse error: Standalone identifier '%s' is not a valid global command (must be a declaration or executable command).\n", id);
@@ -327,7 +335,7 @@ static Node *parse_statement(int is_global) {
     }
 
     else if (curtok.type == TOK_SAY) {
-        // N_SAY: say ( EXPR )
+        // ... (Lógica para TOK_SAY inalterada) ...
         advance();
         expect(TOK_LPAREN); advance();
         Node *expr = parse_and_or(); 
@@ -341,7 +349,7 @@ static Node *parse_statement(int is_global) {
     }
     
     else if (curtok.type == TOK_HEAR) {
-        // N_HEAR: hear ( ID )
+        // ... (Lógica para TOK_HEAR inalterada) ...
         advance();
         expect(TOK_LPAREN); advance();
         expect(TOK_ID);
@@ -357,7 +365,7 @@ static Node *parse_statement(int is_global) {
     }
     
     else if (curtok.type == TOK_IF) {
-        // N_IF: if ( COND ) { BLOCK } [ else { BLOCK } ]
+        // ... (Lógica para TOK_IF inalterada) ...
         advance();
         expect(TOK_LPAREN); advance();
         Node *cond = parse_condition();
@@ -370,7 +378,7 @@ static Node *parse_statement(int is_global) {
         Node *else_block = NULL;
         if (curtok.type == TOK_ELSE) {
             advance();
-            skip_newlines(); // Permite newline entre 'else' e '{'
+            skip_newlines(); 
             expect(TOK_LBRACE); advance();
             else_block = parse_block_list();
             expect(TOK_RBRACE); advance();
@@ -380,25 +388,44 @@ static Node *parse_statement(int is_global) {
     }
     
     else if (curtok.type == TOK_RETURN) {
-        // N_RETURN: return EXPR
+        // N_RETURN: return [ TYPE ] EXPR
         advance();
+        
+        // 1. Verifica e processa o tipo explícito opcional
+        char explicit_type[MAX_TOKEN_LEN] = "\0";
+        if (curtok.type == TOK_LBRACK) {
+            advance();
+            expect(TOK_TYPE);
+            strncpy(explicit_type, curtok.lexeme, MAX_TOKEN_LEN-1);
+            advance();
+            expect(TOK_RBRACK); advance();
+        }
+
+        // 2. Processa a expressão de retorno
         Node *expr = parse_and_or(); 
         if (!expr) {
             fprintf(stderr, "Erro de sintaxe: Expressão esperada após 'return'.\n");
             exit(1);
         }
         
+        // 3. Verifica o fim da instrução
         if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF && curtok.type != TOK_RBRACE) {
             fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após comando 'return'.\n");
             advance();
         }
-        return make_node(N_RETURN, NULL, NULL, expr, NULL, NULL);
+        
+        // 4. Cria o nó usando a nova função construtora (ou a antiga, se o tipo for vazio)
+        if (explicit_type[0] != '\0') {
+            return make_return_node_with_type(explicit_type, expr);
+        } else {
+            return make_return_node(expr);
+        }
     }
     
     else if (curtok.type == TOK_NEWLINE) {
         // Caso de múltiplas linhas vazias
         advance();
-        return parse_statement(is_global); // Tenta analisar o próximo comando
+        return parse_statement(is_global); 
     }
     
     else {
@@ -423,13 +450,12 @@ static Node *parse_block_list() {
             list_current->right = make_node(N_STMT_LIST, NULL, NULL, stmt, NULL, NULL);
             list_current = list_current->right;
         }
-        // Nenhuma chamada a skip_newlines() aqui, pois já foi feita em parse_statement
     }
     
     return list_head;
 }
 
-// Analisa a definição de uma função
+// Analisa a definição de uma função (INALTERADO)
 static Node *parse_function_definition() {
     expect(TOK_FN); advance();
     expect(TOK_ID);
@@ -505,7 +531,7 @@ static Node *parse_function_definition() {
 
 
 /* ------------------------------------------------------------
-   PARSE ALL (Ponto de Entrada)
+   PARSE ALL (Ponto de Entrada) - INALTERADO
    ------------------------------------------------------------ */
 void parse_all() {
     advance();

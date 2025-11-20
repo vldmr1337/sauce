@@ -1,7 +1,7 @@
 CC = cc
 CFLAGS = -std=c11 -Wall -Wextra -O2
 
-OBJS = lexer.o parser.o codegen.o compiler.o
+OBJS = lexer.o parser.o codegen.o main.o
 
 all: compiler
 
@@ -17,8 +17,8 @@ parser.o: parser.c compiler.h
 codegen.o: codegen.c compiler.h
 	$(CC) $(CFLAGS) -c codegen.c
 
-compiler.o: compiler.c compiler.h
-	$(CC) $(CFLAGS) -c compiler.c
+compiler.o: main.c compiler.h
+	$(CC) $(CFLAGS) -c main.c
 
 clean:
 	rm -f *.o compiler output.c app

@@ -11,11 +11,13 @@
 #include <string.h>
 #include <ctype.h>
 
-// ... (Resto do arquivo compiler.h, que permanece o mesmo)
+// --- Constantes ---
 
 #define MAX_TOKEN_LEN 256
 #define MAX_SYM 1024
 #define MAX_FN_DEFS 256
+
+// --- Tipos de Token ---
 
 typedef enum {
     TOK_EOF, TOK_ID, TOK_NUMBER, TOK_STRING,
@@ -23,7 +25,9 @@ typedef enum {
     TOK_LBRACE, TOK_RBRACE, TOK_EQ, TOK_COMMA, TOK_SEMI,
     TOK_FN, TOK_IF, TOK_ELSE, TOK_RETURN, TOK_SAY, TOK_HEAR,
     TOK_TYPE, TOK_OP, TOK_UNKNOWN, TOK_NEWLINE,
-    TOK_OPERATOR, TOK_BOOL,// NOVOS TOKENS LÓGICOS E LITERAIS
+    TOK_OPERATOR, 
+    // LITERAIS E LÓGICOS
+    TOK_BOOL,
     TOK_TRUE,
     TOK_FALSE,
     TOK_AND, // and
@@ -60,20 +64,32 @@ typedef enum {
     N_LTE // Novo: Less Than or Equal (<=)
 } NodeKind;
 
-// Estrutura do Nó da AST
+// --- Estrutura do Nó da AST (CORRIGIDA) ---
 typedef struct Node {
     NodeKind kind;
     char name[MAX_TOKEN_LEN]; // Nome da variável/função
     char text[MAX_TOKEN_LEN]; // Valor literal
     char typeName[MAX_TOKEN_LEN]; // Tipo inferido ou declarado
     
+    // NOVO CAMPO: Tipo de retorno explícito (usado para return[tipo] valor)
+    char explicitReturnType[MAX_TOKEN_LEN]; 
+    
     struct Node *left;  // Expressão / Parâmetros
     struct Node *mid;   // Corpo da função / Bloco ELSE
     struct Node *right; // Próximo na lista / Bloco THEN
 } Node;
 
+// --- Prototipos da AST (CORRIGIDOS) ---
+
 // Funções de utilidade para a AST
 Node *make_node(NodeKind kind, const char *name, const char *text, Node *left, Node *mid, Node *right);
+
+// Prototipo para criar N_RETURN sem tipo explícito
+Node *make_return_node(Node *expr); 
+
+// NOVO PROTOTIPO: Para criar N_RETURN com tipo explícito
+Node *make_return_node_with_type(const char *typeName, Node *expr);
+
 
 /* Variáveis Globais para a AST (Armazenadas pelo parser) */
 extern Node *fn_defs[MAX_FN_DEFS];
@@ -85,7 +101,6 @@ extern int globalStmtCount;
 void generate_code(const char *out_c, Node *program_root);
 
 // Lexer (Prototipos existentes)
-// MUDANÇA: parse_all não recebe parâmetros
 void parse_all();
 extern Token curtok;
 Token next_token();
