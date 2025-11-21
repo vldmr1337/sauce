@@ -74,7 +74,7 @@ static Node *parse_function_definition();
 
 
 /* ------------------------------------------------------------
-   EXPRESSÕES (Hierarquia de Precedência) - INALTERADAS
+   EXPRESSÕES (Hierarquia de Precedência)
    ------------------------------------------------------------ */
 
 static Node *parse_and_or() {
@@ -189,6 +189,10 @@ static Node *parse_factor() {
     } else if (curtok.type == TOK_LPAREN) {
         advance();
         Node *expr = parse_and_or(); 
+        
+        // Permite quebra de linha (TOK_NEWLINE) antes do ')'
+        skip_newlines(); 
+        
         expect(TOK_RPAREN); advance();
         return expr;
         
@@ -232,6 +236,10 @@ static Node *parse_call(const char *fn_name) {
 
         while (curtok.type == TOK_COMMA) {
             advance();
+            
+            // Permite newlines após vírgula
+            skip_newlines(); 
+            
             arg_expr = parse_and_or(); 
             if (!arg_expr) {
                  fprintf(stderr, "Erro de sintaxe: Expressão de argumento esperada após vírgula.\n");
@@ -241,6 +249,9 @@ static Node *parse_call(const char *fn_name) {
             current_arg = current_arg->right;
         }
     }
+    
+    // Permite quebra de linha (TOK_NEWLINE) antes do ')'
+    skip_newlines(); 
     
     expect(TOK_RPAREN); advance();
     
@@ -253,43 +264,46 @@ static Node *parse_condition() {
 
 
 /* ------------------------------------------------------------
-   STATEMENTS (Comandos) - CORREÇÃO DE IF / BLOCK
+   STATEMENTS (Comandos) - Ajuste HEAR/SAY
    ------------------------------------------------------------ */
 
 // Analisa um comando que pode ser global ou local
 static Node *parse_statement(int is_global) {
     // skip_newlines() no início de parse_statement é NECESSÁRIO
-    // para pular linhas vazias entre comandos.
     skip_newlines(); 
 
     if (curtok.type == TOK_ID) {
-        // ... (Lógica para ID: N_VAR_DECL, N_VAR_ASSIGN, N_EXPR_STMT - inalterada)
+        // ... (Lógica para ID: N_VAR_DECL, N_VAR_ASSIGN, N_EXPR_STMT)
         char id[MAX_TOKEN_LEN]; strcpy(id, curtok.lexeme);
         advance();
 
         if (curtok.type == TOK_LBRACK) {
-            // N_VAR_DECL: ID [ TYPE ] = EXPR
+            // N_VAR_DECL: ID [ TYPE ] [ = EXPR ] <--- Permite declaração sem inicialização
             advance();
             expect(TOK_TYPE);
             char type[MAX_TOKEN_LEN]; strcpy(type, curtok.lexeme);
             advance();
             expect(TOK_RBRACK); advance();
-            expect(TOK_EQ); advance();
-
-            Node *expr = parse_and_or(); 
-            if (!expr) {
-                fprintf(stderr, "Erro de sintaxe: Expressão esperada após '=' em declaração.\n");
-                exit(1);
+            
+            // Permite newlines antes do '='
+            skip_newlines(); 
+            
+            Node *expr = NULL;
+            // Verifica se há inicialização com '='
+            if (curtok.type == TOK_EQ) { 
+                advance(); // Consome '='
+                expr = parse_and_or(); 
+                if (!expr) {
+                    fprintf(stderr, "Erro de sintaxe: Expressão esperada após '=' em declaração.\n");
+                    exit(1);
+                }
             }
             
-            Node *decl = make_node(N_VAR_DECL, id, NULL, expr, NULL, NULL);
+            // Cria o nó de declaração (expr pode ser NULL)
+            Node *decl = make_node(N_VAR_DECL, id, NULL, expr, NULL, NULL); 
             strncpy(decl->typeName, type, MAX_TOKEN_LEN-1);
             
-            // Verifica o fim da instrução
-            if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF) {
-                fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após declaração.\n");
-                advance(); 
-            }
+            // FIX: Remove a verificação restritiva de fim de linha/bloco
             return decl;
         }
         else if (curtok.type == TOK_EQ) {
@@ -301,28 +315,23 @@ static Node *parse_statement(int is_global) {
                 exit(1);
             }
 
-            if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF) {
-                fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após atribuição.\n");
-                advance();
-            }
+            // FIX: Remove a verificação restritiva de fim de linha/bloco
             return make_node(N_VAR_ASSIGN, id, NULL, expr, NULL, NULL);
         }
         else if (curtok.type == TOK_LPAREN) {
             // N_EXPR_STMT (Function Call): ID ( ARGS ) \n
             Node *expr = parse_call(id);
             
-            if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF) {
-                fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após chamada de função.\n");
-                advance();
-            }
+            // FIX: Remove a verificação restritiva de fim de linha/bloco
             return make_node(N_EXPR_STMT, NULL, NULL, expr, NULL, NULL);
         }
-        else if (curtok.type == TOK_NEWLINE || curtok.type == TOK_EOF) {
+        else if (curtok.type == TOK_NEWLINE || curtok.type == TOK_EOF || curtok.type == TOK_RBRACE) {
             
             if (is_global) {
-                 fprintf(stderr, "Parse error: Standalone identifier '%s' is not a valid global command (must be a declaration or executable command).\n", id);
+                 fprintf(stderr, "Parse error: Standalone identifier '%s' is not a valid global command (must be a declaration, assignment, or executable command).\n", id);
                  exit(1);
             }
+            // Se for local e for um ID sozinho (i.e. uma expressão sem atribuição), é um comando de expressão implícito
             Node *var_expr = make_node(N_VAR, id, NULL, NULL, NULL, NULL);
             return make_node(N_EXPR_STMT, NULL, NULL, var_expr, NULL, NULL);
         }
@@ -336,12 +345,15 @@ static Node *parse_statement(int is_global) {
         advance();
         expect(TOK_LPAREN); advance();
         Node *expr = parse_and_or(); 
+        
+        // Permite quebra de linha antes do ')'
+        skip_newlines(); 
+        
         expect(TOK_RPAREN); advance();
         
-        if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF && curtok.type != TOK_RBRACE) {
-            fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após comando 'say'.\n");
-            advance();
-        }
+        // Consome o newline após a instrução
+        if (curtok.type == TOK_NEWLINE) advance(); 
+        
         return make_node(N_SAY, NULL, NULL, expr, NULL, NULL);
     }
     
@@ -351,41 +363,43 @@ static Node *parse_statement(int is_global) {
         expect(TOK_ID);
         char varname[MAX_TOKEN_LEN]; strcpy(varname, curtok.lexeme);
         advance();
+        
+        // Permite quebra de linha antes do ')'
+        skip_newlines(); 
+        
         expect(TOK_RPAREN); advance();
         
-        if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF && curtok.type != TOK_RBRACE) {
-            fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após comando 'hear'.\n");
-            advance();
-        }
+        // Consome o newline após a instrução
+        if (curtok.type == TOK_NEWLINE) advance(); 
+        
         return make_node(N_HEAR, NULL, NULL, make_node(N_VAR, varname, NULL, NULL, NULL, NULL), NULL, NULL);
     }
     
     else if (curtok.type == TOK_IF) {
-        // --- CORREÇÃO DE IF ---
         advance();
         expect(TOK_LPAREN); advance();
         Node *cond = parse_condition();
+        
+        skip_newlines(); 
+        
         expect(TOK_RPAREN); advance();
         
-        // CORREÇÃO CRÍTICA: Permite quebra de linha (TOK_NEWLINE) entre o ')' e o '{'
-        skip_newlines(); // Pula quaisquer quebras de linha introduzidas pela formatação
+        skip_newlines(); 
         
         expect(TOK_LBRACE); advance();
         Node *then_block = parse_block_list();
         expect(TOK_RBRACE); advance();
         
+        skip_newlines(); 
+
         Node *else_block = NULL;
         if (curtok.type == TOK_ELSE) {
             advance();
-            // Permite quebra de linha entre o 'else' e o bloco
             skip_newlines(); 
             
-            // Verifica se é 'else if' ou 'else {'
             if (curtok.type == TOK_IF) { 
-                // É um 'else if', trata o IF como o bloco do else.
                 else_block = parse_statement(0); 
             } else {
-                // É um 'else {'
                 expect(TOK_LBRACE); advance();
                 else_block = parse_block_list();
                 expect(TOK_RBRACE); advance();
@@ -414,9 +428,11 @@ static Node *parse_statement(int is_global) {
             exit(1);
         }
         
-        if (curtok.type != TOK_NEWLINE && curtok.type != TOK_EOF && curtok.type != TOK_RBRACE) {
-            fprintf(stderr, "Erro de sintaxe: Esperado fim de linha após comando 'return'.\n");
-            advance();
+        // Consome o newline após a instrução
+        if (curtok.type == TOK_NEWLINE) advance(); 
+        
+        if (curtok.type != TOK_EOF && curtok.type != TOK_RBRACE && curtok.type != TOK_NEWLINE) {
+             // O parser já avançou, se o próximo token não for EOF ou RBRACE, é um erro.
         }
         
         if (explicit_type[0] != '\0') {
@@ -448,8 +464,7 @@ static Node *parse_block_list() {
     
     while (curtok.type != TOK_RBRACE && curtok.type != TOK_EOF) {
         
-        // CORREÇÃO CRÍTICA: Pula newlines ANTES de tentar ler o próximo comando.
-        // Se após pular, for encontrado o '}', o loop será quebrado na próxima iteração.
+        // Pula newlines ANTES de tentar ler o próximo comando ou '}'.
         skip_newlines(); 
         
         if (curtok.type == TOK_RBRACE) break; 
@@ -482,7 +497,6 @@ static Node *parse_function_definition() {
 
     // Processa parâmetros (omito detalhes para brevidade, lógica é a mesma)
     if (curtok.type == TOK_ID) {
-        // ... Lógica de parse_parameter ...
         
         char param_name[MAX_TOKEN_LEN]; strcpy(param_name, curtok.lexeme);
         advance();
@@ -501,6 +515,9 @@ static Node *parse_function_definition() {
         while (curtok.type == TOK_COMMA) {
             advance(); 
             
+            // Permite newlines após vírgula
+            skip_newlines();
+            
             expect(TOK_ID);
             strcpy(param_name, curtok.lexeme);
             advance();
@@ -518,6 +535,9 @@ static Node *parse_function_definition() {
         }
     }
     
+    // Permite quebra de linha (TOK_NEWLINE) antes do ')'
+    skip_newlines(); 
+    
     expect(TOK_RPAREN); advance();
     
     char ret_type[MAX_TOKEN_LEN] = "void";
@@ -530,14 +550,14 @@ static Node *parse_function_definition() {
         expect(TOK_RBRACK); advance();
     }
     
-    // CORREÇÃO: Permite newlines entre o tipo de retorno/argumentos e a chave de abertura
+    // Permite newlines entre o tipo de retorno/argumentos e a chave de abertura
     skip_newlines(); 
 
     expect(TOK_LBRACE); advance();
     Node *body_list = parse_block_list();
     expect(TOK_RBRACE); advance();
     
-    // Consome o newline após o fechamento da função (mantido)
+    // Consome o newline após o fechamento da função
     skip_newlines(); 
 
     Node *fn_def = make_node(N_FN_DEF, fname, NULL, param_list, body_list, NULL);
@@ -548,7 +568,7 @@ static Node *parse_function_definition() {
 
 
 /* ------------------------------------------------------------
-   PARSE ALL (Ponto de Entrada) - INALTERADO
+   PARSE ALL (Ponto de Entrada)
    ------------------------------------------------------------ */
 void parse_all() {
     advance();

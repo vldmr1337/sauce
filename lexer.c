@@ -15,9 +15,11 @@ static int nextchar() {
 }
 
 static void skip_spaces() {
+    // Adiciona tratamento para caracteres de controle e outros espaços em branco comuns
     while (1) {
         int c = peek();
-        if (c == ' ' || c == '\t' || c == '\r') 
+        // Inclui espaços normais, tab, retorno de carro e form feed
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\f') 
             nextchar();
         else
             break;
@@ -56,21 +58,23 @@ Token next_token() {
     // identifier or keyword or type
     if (isalpha(c) || c == '_') {
         int start = POS;
+        
+        // O loop consome o primeiro caractere que já foi verificado e continua.
         while (isalnum(peek()) || peek() == '_')
             nextchar();
-
+            
+        // POS agora está apontando para o primeiro caractere após o token.
         int len = POS - start;
         strncpy(tok.lexeme, SRC + start, len);
         tok.lexeme[len] = '\0';
 
-        // --- PALAVRAS-CHAVE E LITERAIS (TODOS DEVEM RETORNAR IMEDIATAMENTE) ---
+        // --- PALAVRAS-CHAVE E LITERAIS ---
         if (strcmp(tok.lexeme, "say") == 0) { tok.type = TOK_SAY; return tok; }
         else if (strcmp(tok.lexeme, "hear") == 0) { tok.type = TOK_HEAR; return tok; }
         else if (strcmp(tok.lexeme, "if") == 0) { tok.type = TOK_IF; return tok; }
         else if (strcmp(tok.lexeme, "else") == 0) { tok.type = TOK_ELSE; return tok; }
         else if (strcmp(tok.lexeme, "fn") == 0) { tok.type = TOK_FN; return tok; }
         else if (strcmp(tok.lexeme, "return") == 0) { tok.type = TOK_RETURN; return tok; }
-        // NOVOS MAPPINGS LÓGICOS E LITERAIS (AGORA RETORNAM)
         else if (strcmp(tok.lexeme, "true") == 0) { tok.type = TOK_TRUE; return tok; }
         else if (strcmp(tok.lexeme, "false") == 0) { tok.type = TOK_FALSE; return tok; }
         else if (strcmp(tok.lexeme, "and") == 0) { tok.type = TOK_AND; return tok; }
@@ -94,14 +98,16 @@ Token next_token() {
     // number
     if (isdigit(c)) {
         int start = POS;
-
+        
+        // O loop consome o primeiro dígito e continua
         while (isdigit(peek())) nextchar();
 
         if (peek() == '.') {
             nextchar();
             while (isdigit(peek())) nextchar();
         }
-
+        
+        // POS agora está apontando para o primeiro caractere após o token.
         int len = POS - start;
         strncpy(tok.lexeme, SRC + start, len);
         tok.lexeme[len] = '\0';
@@ -114,20 +120,27 @@ Token next_token() {
     if (c == '"') {
         int start = POS; 
 
-        nextchar(); 
+        nextchar(); // Consome aspa de abertura
         while (peek() != '"' && peek() != '\0' && peek() != '\n') 
             nextchar();
 
         if (peek() == '"')
-            nextchar(); 
+            nextchar(); // Consome aspa de fechamento
         else {
             fprintf(stderr, "String não fechada ou quebra de linha inesperada na string!\n");
             exit(1);
         }
 
-        // O comprimento da string deve ser apenas o conteúdo
-        int len = POS - start; 
-        strncpy(tok.lexeme, SRC + start, len);
+        // Pega apenas o conteúdo interno (exclui as aspas)
+        int content_start = start + 1;
+        int content_end = POS - 1; 
+        int len = content_end - content_start; 
+        
+        if (len < 0) {
+            len = 0; 
+        }
+        
+        strncpy(tok.lexeme, SRC + content_start, len);
         tok.lexeme[len] = '\0';
 
         tok.type = TOK_STRING;
@@ -170,19 +183,11 @@ Token next_token() {
             fprintf(stderr, "Caractere inválido no lexer: '!' (apenas '!=' é suportado)\n");
             exit(1);
         case '&':
-            nextchar();
-            if (peek() == '&') { // &&
-                nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "&&"); return tok;
-            }
-            fprintf(stderr, "Caractere inválido no lexer: '&' (apenas '&&' é suportado)\n");
-            exit(1);
+             fprintf(stderr, "Operador '&' inválido. Use a palavra-chave 'and'.\n");
+             exit(1);
         case '|':
-            nextchar();
-            if (peek() == '|') { // ||
-                nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "||"); return tok;
-            }
-            fprintf(stderr, "Caractere inválido no lexer: '|' (apenas '||' é suportado)\n");
-            exit(1);
+             fprintf(stderr, "Operador '|' inválido. Use a palavra-chave 'or'.\n");
+             exit(1);
 
         // Operadores de 1 ou 2 caracteres (RELACIONAIS)
         case '>':
@@ -209,6 +214,7 @@ Token next_token() {
             nextchar(); tok.type = TOK_OPERATOR; strcpy(tok.lexeme, "/"); return tok;
     }
 
-    fprintf(stderr, "Caractere inválido no lexer: '%c'\n", c);
+    // Se chegou aqui, é um caractere que não reconhecemos.
+    fprintf(stderr, "Caractere inválido no lexer: '%c' (código: %d)\n", c, c);
     exit(1);
 }
